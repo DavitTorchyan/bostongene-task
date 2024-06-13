@@ -1,0 +1,105 @@
+---
+- name: Setup EC2 with Nginx and Docker
+  hosts: all
+  become: yes
+  vars:
+    html_content: |
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+          <meta charset="UTF-8">
+          <title>BostonGene Task</title>
+      </head>
+      <body>
+          <img src="latest.jpg" alt="Stream Image">
+      </body>
+      </html>
+
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: Install Docker
+      ansible.builtin.apt:
+        name: docker.io
+        state: present
+      notify: enable docker
+
+    - name: Add current user to Docker group
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+
+    - name: Install Nginx
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+      notify:
+        - enable nginx
+
+    - name: Remove default files from /var/www/html
+      ansible.builtin.shell:
+        cmd: rm /var/www/html/*
+
+    - name: Deploy custom index.html
+      ansible.builtin.copy:
+        dest: /var/www/html/index.html
+        content: "{{ html_content }}"
+        mode: '0644'
+
+    - name: Create Docker build directory
+      ansible.builtin.file:
+        path: "/tmp/docker-files"
+        state: directory
+        owner: root
+        group: docker
+        mode: '0755'
+
+    - name: Transfer Dockerfile
+      ansible.builtin.copy:
+        src: "./Dockerfile"
+        dest: "/tmp/docker-files/Dockerfile"
+        mode: '0644'
+
+    - name: Transfer image-update.sh
+      ansible.builtin.copy:
+        src: "./image-update.sh"
+        dest: "/tmp/docker-files/image-update.sh"
+        mode: '0755'
+
+    - name: Build Docker image
+      community.docker.docker_image:
+        build:
+          path: "/tmp/docker-files"
+        name: "image_update"
+        tag: "latest"
+        source: build
+
+    - name: Run Docker container
+      community.docker.docker_container:
+        name: "image_update_container"
+        image: "image_update:latest"
+        state: started
+        restart_policy: always
+        volumes:
+          - "/var/www/html:/data"
+
+    # Uncomment if there are Nginx configuration changes
+    # - name: Nginx hot reload
+    #   ansible.builtin.command:
+    #     cmd: nginx -s reload
+
+  handlers:
+    - name: enable docker
+      ansible.builtin.systemd:
+        name: docker
+        enabled: yes
+        state: started
+
+    - name: enable nginx
+      ansible.builtin.systemd:
+        name: nginx
+        enabled: yes
+        state: started
